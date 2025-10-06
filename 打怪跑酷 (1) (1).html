@@ -1,0 +1,1407 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Sky Run — 2D 平台跑酷（双人/单人）</title>
+<style>
+  :root{--bg:#87CEEB;--ground:#6b4f2b;--accent:#ffcc00}
+  html,body{height:100%;margin:0;font-family:Inter,Segoe UI,Roboto,Arial;background:var(--bg)}
+  #gameWrap{display:flex;flex-direction:column;height:100vh;background:linear-gradient(#aee1ff,#87CEEB)}
+  header{padding:10px 16px;display:flex;align-items:center;justify-content:space-between}
+  h1{margin:0;font-size:18px}
+  #hud{display:flex;gap:12px;align-items:center}
+  button{padding:8px 12px;border-radius:8px;border:0;background:#222;color:#fff;cursor:pointer}
+  canvas{display:block;background:transparent;align-self:center;position:relative;z-index:1}
+  #startScreen{position:absolute;inset:0;display:grid;place-items:center;background:rgba(0,0,0,0.45);z-index:50}
+  .panel{background:linear-gradient(180deg,#fff,#f4f4f6);padding:18px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.3);width:min(880px,92vw)}
+  .controls{display:flex;justify-content:space-between;margin-top:12px;gap:8px}
+  .small{font-size:13px;color:#444}
+  .kbd{background:#111;color:#fff;padding:4px 6px;border-radius:6px;font-family:monospace}
+  footer{padding:8px 16px;font-size:12px;color:#333}
+  #overlay{position:absolute;inset:0;display:none;place-items:center;z-index:60;pointer-events:none}
+  #overlay .msg{pointer-events:auto;background:rgba(0,0,0,0.75);color:#fff;padding:20px;border-radius:12px;text-align:center}
+  #overlay .msg h2{margin:0 0 8px 0}
+  /* difficulty modal */
+  #diffModal{position:absolute;inset:0;display:none;place-items:center;z-index:70}
+  #diffModal .panel{width:360px}
+  /* touch UI */
+  #touchUI{position:fixed;left:0;bottom:0;width:100%;height:36vh;pointer-events:none;z-index:120;display:none}
+  .touch-left{position:absolute;left:6%;bottom:8%;width:36%;height:30%;display:flex;gap:12px;pointer-events:auto;align-items:center}
+  .touch-right{position:absolute;right:6%;bottom:8%;width:36%;height:30%;display:flex;gap:12px;pointer-events:auto;align-items:center;justify-content:flex-end}
+  .touch-btn{width:66px;height:66px;border-radius:12px;background:rgba(0,0,0,0.45);backdrop-filter:blur(4px);display:grid;place-items:center;color:#fff;font-weight:700;user-select:none}
+  .touch-action{width:86px;height:86px;border-radius:999px;background:rgba(0,0,0,0.45);display:grid;place-items:center;color:#fff;font-weight:800;user-select:none}
+  .hidden{display:none}
+  /* low HP vignette */
+  #vignette{pointer-events:none;position:fixed;inset:0;z-index:160;mix-blend-mode:multiply}
+  .ammoUI{position:absolute;top:12px;font-size:14px;color:#fff;z-index:200;padding:8px;border-radius:8px;background:rgba(0,0,0,0.35)}
+  #ammoP1{left:12px}
+  #ammoP2{right:12px}
+  /* reload progress */
+  .reloadBar{width:80px;height:8px;background:rgba(255,255,255,0.12);border-radius:6px;overflow:hidden}
+  .reloadBar > i{display:block;height:100%;width:0%;background:linear-gradient(90deg,#ffcc00,#ff8c00)}
+  @media (min-width:900px){ #touchUI{display:none} }
+</style>
+</head>
+<body>
+<div id="gameWrap">
+  <header>
+    <h1>Sky Run — 2D 平台跑酷（双人/单人）</h1>
+    <div id="hud">
+      <div class="small">关卡: <span id="levelLabel">1</span>/100</div>
+      <div class="small">玩家1 血量: <span id="p1hp">100</span></div>
+      <div class="small">玩家2 血量: <span id="p2hp">100</span></div>
+      <button id="restartBtn">重置</button>
+      <button id="muteBtn">静音</button>
+    </div>
+  </header>
+  <div style="position:relative;flex:1;display:flex;align-items:center;justify-content:center;">
+    <canvas id="game" width="1200" height="640"></canvas>
+
+    <div id="startScreen">
+      <div class="panel">
+        <h2>开始游戏</h2>
+        <p class="small">说明：玩家1 使用 <span class="kbd">A D</span> 移动，<span class="kbd">W</span> 跳（二段跳），<span class="kbd">S</span> 下；瞄准鼠标并按 <span class="kbd">F</span> 或鼠标左键开火。玩家2 使用 <span class="kbd">← →</span> 移动，<span class="kbd">↑</span> 跳，<span class="kbd">↓</span> 下；开火 <span class="kbd">L</span>.</p>
+        <p class="small">特点：方块主角 + 球形四肢、二段跳、地面怪 AI（巡逻/跳跃追击/吃惊）、被击产生粒子与音效、2P 模式无飞行怪、触屏支持、冲刺、换弹与子弹 UI。</p>
+        <div class="controls">
+          <label><input id="twoP" type="checkbox" checked /> 启用双人（本地）</label>
+          <label><input id="mobileMode" type="checkbox" /> 手机触控模式（启用后自动取消双人）</label>
+          <button id="startBtn">开始</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="diffModal">
+      <div class="panel">
+        <h3>选择难度</h3>
+        <p class="small">选择后会应用到本次游戏（选择前怪物/子弹暂停）。</p>
+        <div style="display:flex;gap:8px;margin-top:12px;">
+          <button id="diffEasy">简单</button>
+          <button id="diffNormal">中等</button>
+          <button id="diffHard">困难</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="overlay"><div class="msg" id="overlayMsg"><h2 id="overlayTitle"></h2><div id="overlaySub"></div><div style="margin-top:12px"><button id="overlayRestart">重新开始</button></div></div></div>
+
+    <!-- touch UI -->
+    <div id="touchUI" class="hidden">
+      <div class="touch-left" id="touchLeftGroup">
+        <div class="touch-btn" id="touchLeft">◀</div>
+        <div class="touch-btn" id="touchRight">▶</div>
+      </div>
+      <div class="touch-right" id="touchRightGroup">
+        <div class="touch-action" id="touchJump">跳</div>
+        <div class="touch-action" id="touchFire" style="margin-right:12px">击</div>
+      </div>
+    </div>
+
+    <div id="vignette"></div>
+    <div id="ammoP1" class="ammoUI"><div>P1 子弹: <span id="p1ammo">6</span>/<span id="p1mag">6</span></div><div class="reloadBar" id="p1reload"><i></i></div></div>
+    <div id="ammoP2" class="ammoUI"><div>P2 子弹: <span id="p2ammo">6</span>/<span id="p2mag">6</span></div><div class="reloadBar" id="p2reload"><i></i></div></div>
+
+  </div>
+  <footer>提示：保存为 <strong>game.html</strong> 并用现代浏览器打开。</footer>
+</div>
+
+<script>
+/* ------------------------------------------------------------------
+   Sky Run — 完整单文件版本（更新：弹药上限20，射速 0.15，开枪屏幕震动）
+   - 保存为 game.html 后在现代浏览器打开即可运行
+   ------------------------------------------------------------------ */
+
+/* -------------------- CONFIG & GLOBALS -------------------- */
+let DIFFICULTY = 'normal';
+let MAX_HP = 100;
+let ENEMY_SPEED_MULT = 1.0;
+let ENEMY_HP_MULT = 1.0;
+let ENEMY_DAMAGE_MULT = 1.0;
+
+const GROUND_BLOCK_THRESHOLD_VALUE = 40;
+const FADE_ALPHA = 0.55;
+const DEATH_FADE_TIME = 0.5;
+const QUESTION_HEAL = 10;
+
+const baseMonsterCount = 5;
+const monsterIncreasePerLevel = 2;
+const baseFlyingBase = 2;
+const flyingIncreasePerLevel = 2;
+
+const LIMB_AMPLITUDE = 8;
+const LIMB_FREQ_RUN = 18;
+const LIMB_FREQ_AIR = 6;
+const BODY_SQUASH = 0.12;
+const EYE_MAX_OFFSET = 4.5;
+const ENEMY_FLASH_TIME = 0.18;
+
+const ENEMY_VIEW_DIST = 320;
+const ENEMY_CHASE_SPEED_MULT = 1.6;
+const ENEMY_LOSE_TIME = 2.4;
+let ENEMY_JUMP_VEL = -520; // can be doubled in hard mode
+
+const PARTICLE_COUNT = 14;
+const PARTICLE_LIFETIME = 0.6;
+
+let audioEnabled = true;
+let mobileModeEnabled = false;
+let controls = {
+    leftHold: false,
+    rightHold: false,
+    jumpPressed: false,
+    shootHold: false
+};
+
+let gamePaused = true; // global pause (true until difficulty chosen)
+let running = false;
+let twoPlayer = true;
+let level = 1;
+const MAX_LEVELS = 100;
+
+/* shooting & ammo */
+const MAX_MAG = 20;        // changed to 20 as requested
+const FIRE_COOLDOWN = 0.15; // seconds per shot (faster)
+
+/* screen shake */
+let screenShake = 0;      // intensity
+let screenShakeDecay = 8; // how fast it reduces
+
+/* -------------------- DOM & CANVAS -------------------- */
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W = canvas.width, H = canvas.height;
+const levelLabel = document.getElementById('levelLabel');
+const p1hpEl = document.getElementById('p1hp');
+const p2hpEl = document.getElementById('p2hp');
+const overlay = document.getElementById('overlay');
+const overlayTitle = document.getElementById('overlayTitle');
+const overlaySub = document.getElementById('overlaySub');
+const overlayRestart = document.getElementById('overlayRestart');
+const touchUI = document.getElementById('touchUI');
+const touchLeftBtn = document.getElementById('touchLeft');
+const touchRightBtn = document.getElementById('touchRight');
+const touchJumpBtn = document.getElementById('touchJump');
+const touchFireBtn = document.getElementById('touchFire');
+const ammoP1El = document.getElementById('p1ammo');
+const ammoP1Mag = document.getElementById('p1mag');
+const ammoP2El = document.getElementById('p2ammo');
+const ammoP2Mag = document.getElementById('p2mag');
+const p1reloadBar = document.querySelector('#p1reload i');
+const p2reloadBar = document.querySelector('#p2reload i');
+
+window.addEventListener('resize', ()=>{
+  const scale = Math.min(window.innerWidth/1200, window.innerHeight/640, 1);
+  canvas.style.width = (1200*scale)+'px';
+  canvas.style.height = (640*scale)+'px';
+});
+window.dispatchEvent(new Event('resize'));
+
+/* -------------------- input -------------------- */
+const keys = {}, prevKeys = {};
+addEventListener('keydown', e=>{ keys[e.key.toLowerCase()] = true; });
+addEventListener('keyup', e=>{ keys[e.key.toLowerCase()] = false; });
+
+let mouse = {x:0,y:0,inside:false,down:false};
+canvas.addEventListener('mousemove', (e)=>{
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  mouse.x = (e.clientX - rect.left) * scaleX;
+  mouse.y = (e.clientY - rect.top) * scaleY;
+});
+canvas.addEventListener('mouseenter', ()=> mouse.inside = true);
+canvas.addEventListener('mouseleave', ()=> mouse.inside = false);
+canvas.addEventListener('mousedown', ()=> mouse.down = true);
+canvas.addEventListener('mouseup', ()=> mouse.down = false);
+
+// touch mapping (press & hold)
+let touchState = {left:false,right:false,jump:false,fire:false};
+function bindTouch(el, key){
+  if(!el) return;
+  el.addEventListener('touchstart', (ev)=>{ ev.preventDefault(); touchState[key]=true; });
+  el.addEventListener('touchend', (ev)=>{ ev.preventDefault(); touchState[key]=false; });
+  el.addEventListener('touchcancel', (ev)=>{ ev.preventDefault(); touchState[key]=false; });
+}
+bindTouch(touchLeftBtn,'left');
+bindTouch(touchRightBtn,'right');
+bindTouch(touchJumpBtn,'jump');
+bindTouch(touchFireBtn,'fire');
+
+/* -------------------- math / util -------------------- */
+class Vec{ constructor(x=0,y=0){ this.x=x; this.y=y; } }
+class Sprite{ constructor(x,y,w,h){ this.pos=new Vec(x,y); this.vel=new Vec(0,0); this.w=w; this.h=h; this.grounded=false; }
+  intersects(o){ return !(this.pos.x+this.w < o.pos.x || this.pos.x > o.pos.x + o.w || this.pos.y+this.h < o.pos.y || this.pos.y > o.pos.y + o.h); }
+}
+
+function hexToRgb(hex){ hex = hex.replace('#',''); if(hex.length===3) hex = hex.split('').map(c=>c+c).join(''); const n=parseInt(hex,16); return {r:(n>>16)&255,g:(n>>8)&255,b:n&255}; }
+function mixColors(c1,c2,t){ return { r: c1.r + (c2.r - c1.r)*t, g: c1.g + (c2.g - c1.g)*t, b: c1.b + (c2.b - c1.b)*t }; }
+CanvasRenderingContext2D.prototype.roundRect = function(x,y,w,h,r){ if(w<2*r) r=w/2; if(h<2*r) r=h/2; this.beginPath(); this.moveTo(x+r,y); this.arcTo(x+w,y,x+w,y+h,r); this.arcTo(x+w,y+h,x,y+h,r); this.arcTo(x,y+h,x,y,r); this.arcTo(x,y,x+w,y,r); this.closePath(); return this; };
+
+/* -------------------- audio (WebAudio) -------------------- */
+let audioCtx = null;
+function ensureAudio(){ if(audioCtx) return; try{ audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }catch(e){ audioEnabled=false; } }
+function playTone(freq, duration=0.12, type='sine', gain=0.06){
+  if(!audioEnabled) return;
+  ensureAudio(); if(!audioCtx) return;
+  const o = audioCtx.createOscillator(); const g = audioCtx.createGain();
+  o.type=type; o.frequency.setValueAtTime(freq, audioCtx.currentTime);
+  g.gain.setValueAtTime(gain, audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + duration);
+  o.connect(g); g.connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime + duration);
+}
+function playAngrySound(){ // simple bark; with short envelope
+  playTone(520,0.12,'square',0.08); setTimeout(()=>playTone(720,0.08,'sawtooth',0.06),80);
+}
+function playHitSound(){ playTone(640,0.18,'sawtooth',0.06); }
+function playReloadSound(){ playTone(240,0.35,'sine',0.06); }
+
+/* -------------------- world data -------------------- */
+let groundY = H - 96;
+let levelWidth = 2400;
+let blocks = [], enemies = [], flyingEnemies = [], bullets = [], players = [], particles = [], cam = {x:0,y:0};
+
+/* -------------------- particles -------------------- */
+class Particle{
+  constructor(x,y,vx,vy,color,lifetime){
+    this.pos=new Vec(x,y); this.vel=new Vec(vx,vy); this.color=color; this.life=lifetime||PARTICLE_LIFETIME; this.maxLife=this.life; this.r=2+Math.random()*3;
+  }
+  update(dt){
+    this.pos.x += this.vel.x*dt;
+    this.pos.y += this.vel.y*dt;
+    this.vel.y += 800*dt;
+    this.life -= dt;
+  }
+  draw(ctx,cam){
+    if(this.life<=0) return;
+    const a = Math.max(0,this.life/this.maxLife);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = this.color;
+    ctx.beginPath(); ctx.ellipse(this.pos.x - cam.x, this.pos.y - cam.y, this.r, this.r, 0,0,Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+function spawnParticles(x,y,baseColor,n){
+  for(let i=0;i<n;i++){
+    const ang = Math.random()*Math.PI*2;
+    const sp = 120 + Math.random()*220;
+    const vx = Math.cos(ang)*sp;
+    const vy = Math.sin(ang)*sp*0.6 - 40;
+    const r = Math.min(255, Math.floor(baseColor.r + Math.random()*60));
+    const g = Math.min(255, Math.floor(baseColor.g + Math.random()*60));
+    const b = Math.min(255, Math.floor(baseColor.b + Math.random()*60));
+    const col = 'rgb(' + r + ',' + g + ',' + b + ')';
+    particles.push(new Particle(x + (Math.random()-0.5)*10, y + (Math.random()-0.5)*10, vx, vy, col, 0.4 + Math.random()*0.5));
+  }
+  playHitSound();
+}
+
+/* -------------------- Player (方块 + 球形四肢) -------------------- */
+class Player extends Sprite {
+  constructor(x, y, color = '#2e86de') {
+    super(x, y, 32, 48);
+    this.baseColor = color; this.color = hexToRgb(color);
+    this.hp = MAX_HP;
+    this.facing = 1;
+    this.jumpCount = 0;
+    this.blinkTimer = Math.random() * 4;
+    this.shootCooldown = 0;
+    this.speed = 260;
+    this.faded = false;
+    this.dead = false; this.alpha = 1; this.deathTimer = 0;
+    this.prevPos = { x: this.pos.x, y: this.pos.y };
+    this.limbPhase = Math.random() * Math.PI * 2;
+    this.eyeWanderPhase = Math.random() * Math.PI * 2;
+    this.celebrateTimer = 0;
+    this.invulTimer = 0;
+    // ammo
+    this.mag = MAX_MAG; this.maxMag = MAX_MAG; this.reloading = false; this.reloadTimer = 0; this.reloadDuration = 1.0;
+    // dash
+    this.dashTimer = 0; this.isDashing = false; this.dashDir = 0; this.dashDuration = 0.28;
+    this.lastKeyTap = { left: 0, right: 0 };
+    this.aimTarget = null;
+    this.heartbeatTimer = 0;
+
+    this.rollAngle = 0; // 翻滚角度
+  }
+
+  tryDash(dir) {
+    const now = performance.now();
+    const last = this.lastKeyTap[dir > 0 ? 'right' : 'left'] || 0;
+    if (now - last < 300) {
+      this.isDashing = true; this.dashTimer = this.dashDuration; this.dashDir = dir;
+      // small screen shake will be triggered on shooting instead of on dash, but we keep dash visual
+    }
+    this.lastKeyTap[dir > 0 ? 'right' : 'left'] = now;
+  }
+
+  update(dt, controls, id) {
+    this.prevPos.x = this.pos.x; this.prevPos.y = this.pos.y;
+    if (this.dead) {
+      if (this.deathTimer < DEATH_FADE_TIME) { this.deathTimer += dt; this.alpha = Math.max(0, 1 - (this.deathTimer / DEATH_FADE_TIME)); } else this.alpha = 0;
+      return;
+    }
+    if (this.invulTimer > 0) this.invulTimer -= dt;
+
+    const speed = this.isDashing ? this.speed * 2.6 : this.speed;
+    const jumpVel = -620;
+
+    if (controls.left) { this.vel.x = -speed; this.facing = -1; }
+    else if (controls.right) { this.vel.x = speed; this.facing = 1; }
+    else { if (!this.isDashing) this.vel.x = 0; }
+
+    if (controls.leftPressedEdge) this.tryDash(-1);
+    if (controls.rightPressedEdge) this.tryDash(1);
+
+    if (this.isDashing) {
+      this.dashTimer -= dt;
+      if (this.dashTimer <= 0) { this.isDashing = false; this.dashTimer = 0; }
+    }
+
+    // 翻滚冲刺旋转逻辑
+    if (this.isDashing) {
+      this.rollAngle += this.dashDir * dt * Math.PI * 6; // 每秒3圈
+    } else {
+      this.rollAngle *= 0.8;
+      if (Math.abs(this.rollAngle) < 0.01) this.rollAngle = 0;
+    }
+
+    if ((controls.jumpPressed || (mobileModeEnabled && controls.jumpHold && controls.jumpPressedEdge)) && this.jumpCount < 2) {
+      this.vel.y = jumpVel;
+      this.jumpCount++;
+      this.grounded = false;
+    }
+
+    // gravity
+    this.vel.y += 1500 * dt;
+
+    // integrate
+    this.pos.x += this.vel.x * dt;
+    this.pos.y += this.vel.y * dt;
+
+    // clamp
+    if (this.pos.x < 0) this.pos.x = 0;
+    if (this.pos.x + this.w > levelWidth) this.pos.x = levelWidth - this.w;
+
+    // ground
+    if (this.pos.y + this.h > groundY) {
+      const landed = !this.grounded;
+      this.pos.y = groundY - this.h;
+      this.vel.y = 0;
+      if (landed) { this.grounded = true; this.jumpCount = 0; }
+    }
+
+    // animation phases
+    const speedFactor = Math.min(1, Math.abs(this.vel.x) / 260);
+    this.limbPhase += dt * (this.grounded ? (LIMB_FREQ_RUN * (0.4 + speedFactor * 0.9)) : LIMB_FREQ_AIR);
+    this.eyeWanderPhase += dt * 1.8;
+
+    // blink
+    this.blinkTimer -= dt;
+    if (this.blinkTimer <= 0) { this._blink = true; this.blinkTimer = 0.12; setTimeout(() => { this._blink = false; this.blinkTimer = 2 + Math.random() * 3; }, 120); }
+
+    if (this.shootCooldown > 0) this.shootCooldown -= dt;
+
+    // reload handling
+    if (this.reloading) {
+      this.reloadTimer += dt;
+      const frac = Math.min(1, this.reloadTimer / this.reloadDuration);
+      if (id === 0) p1reloadBar.style.width = (frac * 100) + '%';
+      if (id === 1) p2reloadBar.style.width = (frac * 100) + '%';
+      if (this.reloadTimer >= this.reloadDuration) {
+        this.reloading = false; this.reloadTimer = 0; this.mag = this.maxMag;
+        if (id === 0) { ammoP1El.textContent = this.mag; ammoP1Mag.textContent = this.maxMag; p1reloadBar.style.width = '0%'; }
+        if (id === 1) { ammoP2El.textContent = this.mag; ammoP2Mag.textContent = this.maxMag; p2reloadBar.style.width = '0%'; }
+        playReloadSound();
+      }
+    }
+
+    // clamp HP
+    if (this.hp < 0) this.hp = 0;
+    if (this.hp > MAX_HP) this.hp = MAX_HP;
+    if (this.celebrateTimer > 0) this.celebrateTimer -= dt;
+
+    // heartbeat timer for low HP sound
+    if (this.hp <= MAX_HP * 0.25) {
+      this.heartbeatTimer -= dt;
+      if (this.heartbeatTimer <= 0) {
+        this.heartbeatTimer = 0.9; // heart beat interval
+        playTone(120, 0.12, 'sine', 0.08);
+      }
+    } else {
+      this.heartbeatTimer = 0;
+    }
+  }
+
+  draw(ctx, cam, id) {
+    const t = performance.now() / 1000;
+    const hpRatio = this.hp / MAX_HP;
+    const mixed = mixColors(this.color, { r: 255, g: 50, b: 50 }, 1 - hpRatio);
+    const rcol = 'rgb(' + (mixed.r | 0) + ',' + (mixed.g | 0) + ',' + (mixed.b | 0) + ')';
+    const alpha = this.dead ? this.alpha : (this.faded ? FADE_ALPHA : 1.0);
+
+    const vy = this.vel.y;
+    let stretch = 1;
+    if (!this.grounded) {
+      stretch = 1 - Math.max(-0.08, Math.min(0.08, vy / 1600)) * BODY_SQUASH * -1;
+    } else {
+      stretch = 1 - Math.min(0.14, Math.abs(vy) / 1000) * BODY_SQUASH;
+    }
+
+    const cx = this.pos.x - cam.x + this.w / 2;
+    const cy = this.pos.y - cam.y + this.h / 2;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(cx, cy);
+    if (this.rollAngle !== 0) { ctx.rotate(this.rollAngle); }
+    ctx.translate(-cx, -cy);
+
+    // limbs
+    const limbAmp = LIMB_AMPLITUDE * (0.4 + Math.min(1, Math.abs(this.vel.x) / 260) * 1.2);
+    const limbPositions = [
+      { dx: -this.w * 0.45, dy: this.h * 0.45, phase: 0 },
+      { dx: this.w * 0.45, dy: this.h * 0.45, phase: Math.PI },
+      { dx: -this.w * 0.5, dy: -this.h * 0.05, phase: Math.PI / 2 },
+      { dx: this.w * 0.5, dy: -this.h * 0.05, phase: Math.PI * 1.5 }
+    ];
+    for (let i = 0; i < limbPositions.length; i++) {
+      const lp = limbPositions[i];
+      const phase = this.limbPhase + lp.phase;
+      const swayX = Math.cos(phase) * (limbAmp * 0.45) * (lp.dy > 0 ? 1 : 0.6);
+      const swayY = Math.sin(phase) * (limbAmp * 0.38) * (lp.dy > 0 ? 0.6 : 0.4);
+      const lx = cx + lp.dx + swayX * (this.facing);
+      const ly = cy + lp.dy + swayY + (this.celebrateTimer > 0 ? Math.sin(performance.now() / 100 + i) * 6 : 0);
+      ctx.beginPath(); ctx.fillStyle = rcol; ctx.ellipse(lx, ly, 6, 6, 0, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // body
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(1, stretch);
+    ctx.fillStyle = rcol;
+    const bw = this.w * 1.02; const bh = this.h * 0.9;
+    ctx.beginPath(); ctx.roundRect(-bw / 2, -bh / 2, bw, bh, 8); ctx.fill();
+    ctx.restore();
+
+    // eyes
+    const eyeBaseY = cy - this.h * 0.14;
+    const eyeGapX = 8;
+    const pupilWander = Math.sin(this.eyeWanderPhase * 1.3) * 0.8 + Math.cos(this.eyeWanderPhase * 0.7) * 0.6;
+    for (let side = -1; side <= 1; side += 2) {
+      const ex = cx + side * eyeGapX;
+      const ey = eyeBaseY;
+      let targetX = ex + side * 10, targetY = ey;
+      if (id === 0 && !twoPlayer && mouse.inside && !mobileModeEnabled) {
+        targetX = mouse.x + cam.x; targetY = mouse.y + cam.y;
+      } else {
+        targetX = cx + this.facing * 80 + Math.cos(this.eyeWanderPhase * 1.5 + side) * 10;
+        targetY = ey + Math.sin(this.eyeWanderPhase * 0.9) * 6;
+      }
+      const ang = Math.atan2(targetY - (this.pos.y + this.h / 2), targetX - (this.pos.x + this.w / 2));
+      const px = Math.cos(ang) * EYE_MAX_OFFSET * 0.9 + pupilWander * 0.5 * side;
+      const py = Math.sin(ang) * EYE_MAX_OFFSET * 0.7;
+
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.ellipse(ex, ey, 6, 6, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#000';
+      ctx.beginPath(); ctx.ellipse(ex + px, ey + py, 3.2, 3.2, 0, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // gun barrel (simple)
+    ctx.save();
+    ctx.translate(this.pos.x + this.w / 2 - cam.x, this.pos.y + this.h / 2 - cam.y);
+    if (!twoPlayer && id === 0 && mouse.inside && !mobileModeEnabled) {
+      const mx = mouse.x + cam.x, my = mouse.y + cam.y;
+      const ang = Math.atan2(my - (this.pos.y + this.h / 2), mx - (this.pos.x + this.w / 2));
+      ctx.save(); ctx.rotate(ang); ctx.fillStyle = '#333'; ctx.fillRect(10, -5, 28, 10); ctx.restore();
+    } else {
+      ctx.save(); ctx.scale(this.facing, 1); ctx.fillStyle = '#333'; ctx.fillRect(10, -5, 20, 10); ctx.restore();
+    }
+    ctx.restore();
+
+    ctx.restore();
+  }
+
+  kill() { if (this.dead) return; this.dead = true; this.deathTimer = 0; this.alpha = 1.0; }
+}
+
+
+/* -------------------- Bullet, Block -------------------- */
+class Bullet extends Sprite{
+  constructor(x,y,vx,vy,owner){
+    super(x,y,8,6);
+    this.vel.x = vx; this.vel.y = vy; this.owner = owner; this.damage = 20;
+  }
+  update(dt){ this.pos.x += this.vel.x * dt; this.pos.y += this.vel.y * dt; }
+  draw(ctx, cam){ ctx.fillStyle = '#111'; ctx.fillRect(this.pos.x - cam.x, this.pos.y - cam.y, this.w, this.h); }
+}
+
+class Block{
+  constructor(x,y,type='solid'){ this.pos=new Vec(x,y); this.w=48; this.h=48; this.type=type; this.hit=false; }
+  draw(ctx,cam){
+    drawShadow(ctx, this.pos.x - cam.x + this.w/2, this.pos.y - cam.y + this.h + 6, this.w*0.9, 8, 0.12);
+    const x=this.pos.x-cam.x, y=this.pos.y-cam.y;
+    if(this.type==='q' && !this.hit){ ctx.fillStyle='#ffcc00'; ctx.fillRect(x,y,this.w,this.h); ctx.fillStyle='#000'; ctx.font='24px sans-serif'; ctx.fillText('?', x+15,y+33); }
+    else if(this.type==='trap'){ ctx.fillStyle='#c0392b'; ctx.fillRect(x,y,this.w,this.h); ctx.fillStyle='#000'; ctx.font='12px sans-serif'; ctx.fillText('TRAP', x+6, y+28); }
+    else { ctx.fillStyle='#8b5a2b'; ctx.fillRect(x,y,this.w,this.h); }
+  }
+}
+
+/* -------------------- Enemy (地面怪：巡逻/追击/跳跃) -------------------- */
+class Enemy extends Sprite{
+  constructor(x,y){
+    super(x,y,40,48);
+    this.patrol = 120 + Math.random()*40;
+    this.originX = x;
+    this.speed = 60;
+    this.facing = (Math.random()<0.5? -1 : 1);
+    this.hp = Math.max(1, Math.floor(40 * ENEMY_HP_MULT));
+    this.limbPhase = Math.random()*Math.PI*2;
+    this.hitFlashTimer = 0;
+    this.state = 'patrol'; // patrol / chase / stunned
+    this.stateTimer = 0;
+    this.lastSeenTimer = 999;
+    this.baseColor = {r:140,g:40,b:40};
+    this.angryCooldown = 0;
+  }
+
+  update(dt){
+    if(gamePaused) return;
+    this.limbPhase += dt * 6;
+    if(this.hitFlashTimer > 0) this.hitFlashTimer -= dt;
+    if(this.angryCooldown > 0) this.angryCooldown -= dt;
+
+    // find nearest alive player
+    let nearest = null; let nd = 999999;
+    for(const p of players){ if(p.dead) continue; const dx = (p.pos.x + p.w/2) - (this.pos.x + this.w/2); const dy = (p.pos.y + p.h/2) - (this.pos.y + this.h/2); const d = Math.hypot(dx,dy); if(d < nd){ nd = d; nearest = p; } }
+
+    if(this.state === 'stunned'){
+      this.stateTimer -= dt;
+      if(this.stateTimer <= 0) this.state = 'patrol';
+    } else {
+      if(nearest && nd <= ENEMY_VIEW_DIST){
+        if(this.state !== 'chase' && this.angryCooldown <= 0){
+          playAngrySound(); this.angryCooldown = 2.0;
+        }
+        this.state = 'chase';
+        this.lastSeenTimer = ENEMY_LOSE_TIME;
+      } else {
+        this.lastSeenTimer -= dt;
+        if(this.lastSeenTimer <= 0) this.state = 'patrol';
+      }
+    }
+
+    if(this.state === 'patrol'){
+      this.pos.x += this.speed * this.facing * dt * ENEMY_SPEED_MULT;
+      if(Math.abs(this.pos.x - this.originX) > this.patrol) this.facing *= -1;
+    } else if(this.state === 'chase'){
+      if(nearest){
+        const dir = Math.sign((nearest.pos.x + nearest.w/2) - (this.pos.x + this.w/2)) || 1;
+        this.facing = dir;
+        const sp = this.speed * ENEMY_CHASE_SPEED_MULT * ENEMY_SPEED_MULT;
+        this.pos.x += sp * dir * dt;
+
+        const aheadX = this.pos.x + (this.facing>0 ? this.w + 6 : -48 - 6);
+        for(const b of blocks){
+          if(b.pos.x < aheadX + 8 && b.pos.x + b.w > aheadX - 8){
+            if(this.grounded && b.pos.y < groundY && (b.pos.y + b.h) > (this.pos.y + this.h - 6)){
+              this.vel = this.vel || new Vec();
+              this.vel.y = ENEMY_JUMP_VEL;
+              if(DIFFICULTY === 'hard') this.vel.y *= 2;
+              this.pos.y += this.vel.y * 0.016;
+              this.grounded = false;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    if(!this.grounded){
+      this.vel = this.vel || new Vec();
+      this.vel.y += 1500 * dt;
+      this.pos.y += this.vel.y * dt;
+      if(this.pos.y + this.h > groundY){ this.pos.y = groundY - this.h; this.vel.y = 0; this.grounded = true; }
+    }
+
+    if(this.pos.x < 0) this.pos.x = 0;
+    if(this.pos.x + this.w > levelWidth) this.pos.x = levelWidth - this.w;
+  }
+
+  draw(ctx,cam){
+    const cx = this.pos.x - cam.x + this.w/2;
+    const cy = this.pos.y - cam.y + this.h/2;
+    let col = this.baseColor;
+    if(this.hitFlashTimer > 0) col = mixColors(this.baseColor, {r:255,g:200,b:200}, 0.8);
+    const colorStr = 'rgb(' + (col.r|0) + ',' + (col.g|0) + ',' + (col.b|0) + ')';
+
+    ctx.save();
+    const amp = 6; const footOffset = Math.sin(this.limbPhase) * amp;
+    ctx.fillStyle = colorStr;
+    ctx.beginPath(); ctx.ellipse(cx - 10, cy + 18 + footOffset, 6,6,0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + 10, cy + 18 - footOffset, 6,6,0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx - 18, cy - 6 + footOffset*0.4, 5,5,0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + 18, cy - 6 - footOffset*0.4, 5,5,0,0,Math.PI*2); ctx.fill();
+
+    ctx.fillStyle = colorStr; ctx.beginPath(); ctx.ellipse(cx, cy, this.w*0.5, this.h*0.5, 0,0,Math.PI*2); ctx.fill();
+
+    // eyes
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.ellipse(cx - 8, cy - 6, 8,6,0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + 8, cy - 6, 8,6,0,0,Math.PI*2); ctx.fill();
+
+    // pupils: aim first player visually
+    let targetX = cx + this.facing*60, targetY = cy;
+    if(players.length){
+      const p0 = players[0];
+      targetX = p0.pos.x + p0.w/2 - cam.x;
+      targetY = p0.pos.y + p0.h/2 - cam.y;
+    }
+    const ang = Math.atan2(targetY-cy, targetX-cx);
+    const px = Math.cos(ang) * (EYE_MAX_OFFSET*0.85);
+    const py = Math.sin(ang) * (EYE_MAX_OFFSET*0.7);
+
+    ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.ellipse(cx - 8 + px*0.5, cy - 6 + py*0.5, 3.5,3.5,0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + 8 + px*0.5, cy - 6 + py*0.5, 3.5,3.5,0,0,Math.PI*2); ctx.fill();
+
+    ctx.fillStyle = '#400';
+    if(this.state === 'patrol'){
+      ctx.fillRect(cx - 8, cy + 6, 16, 3);
+    } else if(this.state === 'chase'){
+      ctx.beginPath(); ctx.moveTo(cx - 10, cy + 8); ctx.lineTo(cx, cy + 3); ctx.lineTo(cx + 10, cy + 8); ctx.fill();
+    } else if(this.state === 'stunned'){
+    ctx.fillStyle = '#fff';
+ctx.beginPath();
+ctx.arc(cx, cy + 26, 6, 0, Math.PI*2);
+ctx.fill();
+
+    }
+
+    ctx.restore();
+  }
+}
+
+/* -------------------- FlyingEnemy (single-player only) -------------------- */
+class FlyingEnemy extends Sprite{
+  constructor(x,y){
+    super(x,y,40,32);
+    this.vx = (Math.random()<0.5?1:-1) * (80 + Math.random()*60);
+    this.amp = 18 + Math.random()*12;
+    this.speed = Math.abs(this.vx);
+    this.baseY = y;
+    this.hp = Math.max(1, Math.floor((30 + Math.floor(Math.random()*20)) * ENEMY_HP_MULT));
+    this.offset = Math.random()*10;
+    this.hitFlashTimer = 0;
+    this.chaseActive = false;
+  }
+  update(dt){
+    if(gamePaused) return;
+    // if within range of any player, go into direct chase (flies toward nearest player)
+    let nearest = null; let nd = 999999;
+    for(const p of players){ if(p.dead) continue; const dx = (p.pos.x + p.w/2) - (this.pos.x + this.w/2); const dy = (p.pos.y + p.h/2) - (this.pos.y + this.h/2); const d = Math.hypot(dx,dy); if(d < nd){ nd = d; nearest = p; } }
+    // chase threshold
+    if(nearest && nd < 280){
+      this.chaseActive = true;
+    } else {
+      this.chaseActive = false;
+    }
+
+    if(this.chaseActive && nearest){
+      // fly directly toward player
+      const dx = (nearest.pos.x + nearest.w/2) - (this.pos.x + this.w/2);
+      const dy = (nearest.pos.y + nearest.h/2) - (this.pos.y + this.h/2);
+      const ang = Math.atan2(dy, dx);
+      const speed = 220 * ENEMY_SPEED_MULT;
+      this.pos.x += Math.cos(ang) * speed * dt;
+      this.pos.y += Math.sin(ang) * speed * dt;
+    } else {
+      this.pos.x += this.vx * dt;
+      this.pos.y = this.baseY + Math.sin((performance.now()/1000 + this.offset) * 2) * this.amp;
+    }
+
+    if(this.pos.x < 0) { this.pos.x = 0; this.vx *= -1; }
+    if(this.pos.x + this.w > levelWidth){ this.pos.x = levelWidth - this.w; this.vx *= -1; }
+    if(this.hitFlashTimer > 0) this.hitFlashTimer -= dt;
+  }
+  draw(ctx,cam){
+    const t = performance.now()/1000;
+    let baseColor = {r:255,g:107,b:107};
+    if(this.hitFlashTimer > 0) baseColor = mixColors(baseColor, {r:255,g:255,b:255}, 0.7);
+    const colstr = 'rgb(' + (baseColor.r|0) + ',' + (baseColor.g|0) + ',' + (baseColor.b|0) + ')';
+    const cx = this.pos.x - cam.x + this.w/2;
+    const cy = this.pos.y - cam.y + this.h/2;
+
+    ctx.save();
+    const bob = Math.sin(t*3 + this.offset) * 6;
+    ctx.fillStyle = colstr;
+    ctx.beginPath(); ctx.ellipse(cx, cy, this.w*0.5, this.h*0.5, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.ellipse(cx - 8, cy - 6, 6,5,0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + 8, cy - 6, 6,5,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#000';
+    const px = Math.cos(t*2 + this.offset) * 2;
+    ctx.beginPath(); ctx.ellipse(cx - 8 + px, cy - 6, 2.6,2.6,0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(cx + 8 + px, cy - 6, 2.6,2.6,0,0,Math.PI*2); ctx.fill();
+    drawShadow(ctx, this.pos.x - cam.x + this.w/2, groundY - cam.y + 6, 40, 6, 0.12);
+    ctx.restore();
+  }
+}
+
+/* -------------------- level generation -------------------- */
+function GROUND_BLOCK_THRESHOLD(){ return groundY - GROUND_BLOCK_THRESHOLD_VALUE; }
+function genLevel(n){
+  blocks = []; enemies = []; flyingEnemies = []; bullets = []; particles = [];
+  levelWidth = 1200 + Math.min(200*n, 2400);
+
+  for(let i=0;i<Math.floor(levelWidth/200);i++){
+    const x = i*200 + 50 + (Math.random()*80 - 40);
+    const y = groundY - 48 - (Math.random()>0.6 ? (Math.random()*180) : 0);
+    const r = Math.random();
+    if(r > 0.95) blocks.push(new Block(x,y,'trap'));
+    else if(Math.random()>0.8) blocks.push(new Block(x,y,'q'));
+    else blocks.push(new Block(x,y,'solid'));
+  }
+  for(let i=0;i<Math.min(22,4 + n);i++){
+    const x = 200 + Math.random()*(levelWidth-400);
+    const y = groundY - 150 - Math.random()*220;
+    const r = Math.random();
+    if(r > 0.98) blocks.push(new Block(x,y,'trap'));
+    else if(Math.random()>0.85) blocks.push(new Block(x,y,'q'));
+    else blocks.push(new Block(x,y,'solid'));
+  }
+
+  const monsterCount = Math.max(0, Math.floor(baseMonsterCount + (n - 1) * monsterIncreasePerLevel));
+  for(let i=0;i<monsterCount;i++){
+    const x = 300 + Math.random()*(Math.max(800, levelWidth-600));
+    const y = groundY - 48;
+    const e = new Enemy(x,y);
+    e.hp = Math.max(1, Math.floor(40 * ENEMY_HP_MULT));
+    enemies.push(e);
+  }
+
+  if(!twoPlayer){
+    const flyingCount = Math.max(0, Math.floor(baseFlyingBase + (n-1) * flyingIncreasePerLevel));
+    for(let i=0;i<flyingCount;i++){
+      const x = 200 + Math.random()*(levelWidth-400);
+      const y = 80 + Math.random()*160;
+      const fe = new FlyingEnemy(x,y);
+      fe.hp = Math.max(1, Math.floor((30 + Math.floor(Math.random()*20)) * ENEMY_HP_MULT));
+      flyingEnemies.push(fe);
+    }
+  }
+
+  blocks.push(new Block(420,groundY-48,'q'));
+}
+
+/* -------------------- camera -------------------- */
+function updateCamera(){
+  if(!players.length) return;
+  // screen shake offsets
+  let shakeX = 0, shakeY = 0;
+  if(screenShake > 0){
+    shakeX = (Math.random()*2-1) * screenShake;
+    shakeY = (Math.random()*2-1) * screenShake * 0.6;
+  }
+
+  if(twoPlayer && players[1]){
+    const mid = (players[0].pos.x + players[1].pos.x)/2;
+    cam.x = Math.min(Math.max(mid - 600 + shakeX,0), levelWidth-1200);
+  } else {
+    const targetX = Math.min(Math.max(players[0].pos.x - 300 + shakeX, 0), levelWidth - 1200);
+    cam.x += (targetX - cam.x) * 0.08;
+  }
+}
+
+/* -------------------- spawn / reset players -------------------- */
+function spawnPlayers(){
+  // ensure correct number according to twoPlayer and mobileModeEnabled
+  if(mobileModeEnabled) twoPlayer = false;
+  players = [];
+  players.push(new Player(80, groundY-56, '#2e86de'));
+  if(twoPlayer) players.push(new Player(140, groundY-56, '#27ae60'));
+
+  // apply ammo UI & HP clamp
+  players.forEach((p,i)=>{
+    p.maxMag = MAX_MAG;
+    p.mag = p.maxMag;
+    p.hp = Math.min(p.hp || MAX_HP, MAX_HP);
+    if(i === 0){ ammoP1El.textContent = p.mag; ammoP1Mag.textContent = p.maxMag; p1reloadBar.style.width = '0%'; }
+    if(i === 1){ ammoP2El.textContent = p.mag; ammoP2Mag.textContent = p.maxMag; p2reloadBar.style.width = '0%'; }
+  });
+}
+
+function resetToLevel(n){
+  level = n; levelLabel.textContent = level;
+  genLevel(level);
+  groundY = H - 96;
+  spawnPlayers();
+  hideOverlay();
+}
+
+/* -------------------- collision resolving -------------------- */
+function resolveCollisionsAndSpecials(){
+  for(const p of players){
+    p.faded = false;
+    p.grounded = false;
+
+    if(p.pos.y + p.h > groundY){ p.pos.y = groundY - p.h; p.vel.y = 0; p.grounded = true; p.jumpCount = 0; }
+
+    for(const b of blocks){
+      const overlap = (p.pos.x + p.w > b.pos.x && p.pos.x < b.pos.x + b.w && p.pos.y + p.h > b.pos.y && p.pos.y < b.pos.y + b.h);
+      if(!overlap) continue;
+      const isGroundBlock = b.pos.y >= GROUND_BLOCK_THRESHOLD();
+      if(isGroundBlock) p.faded = true;
+
+      const prevBottom = p.prevPos.y + p.h;
+      const prevTop = p.prevPos.y;
+      const prevRight = p.prevPos.x + p.w;
+      const prevLeft = p.prevPos.x;
+      const currBottom = p.pos.y + p.h;
+      const currTop = p.pos.y;
+      const currRight = p.pos.x + p.w;
+      const currLeft = p.pos.x;
+
+      if(prevBottom <= b.pos.y && currBottom > b.pos.y){
+        p.pos.y = b.pos.y - p.h;
+        p.vel.y = 0;
+        p.grounded = true; p.jumpCount = 0;
+      } else if(prevTop >= b.pos.y + b.h && currTop < b.pos.y + b.h){
+        if(b.type === 'q' && !b.hit){
+          b.hit = true;
+          p.vel.y = 120;
+          spawnBulletFromBlock(b,p);
+        } else {
+          p.pos.y = b.pos.y + b.h + 1;
+          p.vel.y = 40;
+        }
+      } else {
+        if(prevRight <= b.pos.x && currRight > b.pos.x){
+          p.pos.x = b.pos.x - p.w; p.vel.x = 0;
+        } else if(prevLeft >= b.pos.x + b.w && currLeft < b.pos.x + b.w){
+          p.pos.x = b.pos.x + b.w; p.vel.x = 0;
+        } else {
+          if((p.pos.x + p.w/2) < (b.pos.x + b.w/2)) p.pos.x = b.pos.x - p.w;
+          else p.pos.x = b.pos.x + b.w;
+          p.vel.x = 0;
+        }
+      }
+
+      if(b.type === 'q' && !b.hit && Math.abs(p.pos.y + p.h - b.pos.y) < 1.5){
+        b.hit = true;
+        p.hp = Math.min(MAX_HP, p.hp + QUESTION_HEAL);
+        spawnBulletFromBlock(b,p);
+      }
+    }
+
+    if(p.pos.y + p.h > groundY){ p.pos.y = groundY - p.h; p.vel.y = 0; p.grounded = true; p.jumpCount = 0; }
+    if(p.pos.x < 0) p.pos.x = 0;
+    if(p.pos.x + p.w > levelWidth) p.pos.x = levelWidth - p.w;
+  }
+}
+
+function spawnBulletFromBlock(block, player){
+  bullets.push(new Bullet(block.pos.x + 20, block.pos.y - 10, player.facing * 300, -120, player));
+}
+
+/* -------------------- predictive aiming for P2 / mobile global -------------------- */
+function predictiveAimShooter(shooter, candidates, bulletSpeed){
+  if(!candidates || candidates.length===0) return null;
+  let best = null; let bd = 1e9;
+  for(const c of candidates){
+    if(c.hp <= 0) continue;
+    const dx = (c.pos.x + c.w/2) - (shooter.pos.x + shooter.w/2);
+    const dy = (c.pos.y + c.h/2) - (shooter.pos.y + shooter.h/2);
+    const d = Math.hypot(dx,dy);
+    if(d < bd){ bd = d; best = c; }
+  }
+  if(!best) return null;
+
+  let tvx = 0, tvy = 0;
+  if(best instanceof Enemy){
+    tvx = (best.state === 'chase') ? best.speed * ENEMY_CHASE_SPEED_MULT * ENEMY_SPEED_MULT * (best.facing || 1) : best.speed * ENEMY_SPEED_MULT * (best.facing || 1);
+  } else if(best instanceof FlyingEnemy){
+    tvx = best.vx;
+    tvy = 0;
+  }
+
+  const sx = shooter.pos.x + shooter.w/2; const sy = shooter.pos.y + shooter.h/2;
+  const tx = best.pos.x + best.w/2; const ty = best.pos.y + best.h/2;
+  const dx = tx - sx; const dy = ty - sy;
+  const dist = Math.hypot(dx,dy);
+  const t = dist / bulletSpeed;
+  const predX = tx + tvx * t; const predY = ty + tvy * t;
+  const ang = Math.atan2(predY - sy, predX - sx);
+  return {ang, target:best, predX, predY};
+}
+
+/* -------------------- main loop -------------------- */
+let last = performance.now();
+
+function loop(now){
+  const dt = Math.min(0.033, (now - last) / 1000);
+  last = now;
+
+  // decay screen shake
+  if(screenShake > 0){
+    screenShake = Math.max(0, screenShake - screenShakeDecay * dt);
+  }
+
+  if(running && !gamePaused){
+    // controls with edge detection
+    const p1controls = {
+      left: keys['a'] || (mobileModeEnabled && touchState.left),
+      right: keys['d'] || (mobileModeEnabled && touchState.right),
+      leftPressedEdge: !!(keys['a'] && !prevKeys['a']) || (mobileModeEnabled && touchState.left && !prevKeys['touchLeft']),
+      rightPressedEdge: !!(keys['d'] && !prevKeys['d']) || (mobileModeEnabled && touchState.right && !prevKeys['touchRight']),
+      jumpPressed: !!(keys['w'] && !prevKeys['w']),
+      jumpHold: touchState.jump,
+      jumpPressedEdge: !!(touchState.jump && !prevKeys['touchJump']),
+      down: keys['s'],
+      shoot: keys['f'] || mouse.down || touchState.fire,
+      shootPressedEdge: !!((keys['f'] && !prevKeys['f']) || (mouse.down && !prevKeys['mouseDown']) || (touchState.fire && !prevKeys['touchFire']))
+    };
+    const p2controls = {
+      left: keys['arrowleft'],
+      right: keys['arrowright'],
+      leftPressedEdge: !!(keys['arrowleft'] && !prevKeys['arrowleft']),
+      rightPressedEdge: !!(keys['arrowright'] && !prevKeys['arrowright']),
+      jumpPressed: !!(keys['arrowup'] && !prevKeys['arrowup']),
+      jumpHold: false,
+      jumpPressedEdge: false,
+      down: keys['arrowdown'],
+      shoot: keys['l'] && !mobileModeEnabled,
+      shootPressedEdge: !!(keys['l'] && !prevKeys['l'])
+    };
+
+    // update players
+    if(players[0]) players[0].update(dt, p1controls, 0);
+    if(players[1]) players[1].update(dt, p2controls, 1);
+
+    // P1 shooting
+    if(players[0] && !players[0].dead && (p1controls.shoot) && players[0].shootCooldown <= 0){
+      // if out of ammo, auto reload
+      if(players[0].mag <= 0 && !players[0].reloading){
+        players[0].reloading = true; players[0].reloadTimer = 0; p1reloadBar.style.width = '0%';
+      } else if(!players[0].reloading && players[0].mag > 0){
+        let ang = 0;
+        if(!twoPlayer && !mobileModeEnabled && mouse.inside){
+          const mx = mouse.x + cam.x, my = mouse.y + cam.y;
+          ang = Math.atan2(my - (players[0].pos.y + players[0].h/2), mx - (players[0].pos.x + players[0].w/2));
+        } else {
+          // mobile/global aim: target nearest enemy
+          const cand = enemies.concat(flyingEnemies);
+          const aim = predictiveAimShooter(players[0], cand, 900);
+          if(aim) ang = aim.ang; else ang = players[0].facing>0?0:Math.PI;
+        }
+        const sp = 1100;
+        const cx = players[0].pos.x + players[0].w/2, cy = players[0].pos.y + players[0].h/2;
+        bullets.push(new Bullet(cx - 4, cy - 4, Math.cos(ang)*sp, Math.sin(ang)*sp, players[0]));
+        players[0].mag -= 1; ammoP1El.textContent = players[0].mag;
+        players[0].shootCooldown = FIRE_COOLDOWN;
+        // screen shake and small camera effect
+        screenShake = Math.min(16, screenShake + 8);
+        playTone(900, 0.06, 'square', 0.06);
+        // auto reload if mag empty
+        if(players[0].mag <= 0){
+          players[0].reloading = true; players[0].reloadTimer = 0;
+        }
+      }
+    }
+
+    // P2 shooting (auto predictive aim)
+    if(twoPlayer && players[1] && !players[1].dead && p2controls.shoot && players[1].shootCooldown <= 0){
+      if(players[1].mag <= 0 && !players[1].reloading){
+        players[1].reloading = true; players[1].reloadTimer = 0; p2reloadBar.style.width = '0%';
+      } else if(!players[1].reloading && players[1].mag > 0){
+        const cand = enemies.concat(flyingEnemies);
+        const aim = predictiveAimShooter(players[1], cand, 900);
+        let ang = 0;
+        if(aim) ang = aim.ang; else ang = players[1].facing>0?0:Math.PI;
+        const cx = players[1].pos.x + players[1].w/2, cy = players[1].pos.y + players[1].h/2;
+        bullets.push(new Bullet(cx - 4, cy - 4, Math.cos(ang)*1100, Math.sin(ang)*1100, players[1]));
+        players[1].mag -= 1; ammoP2El.textContent = players[1].mag;
+        players[1].shootCooldown = FIRE_COOLDOWN;
+        screenShake = Math.min(16, screenShake + 8);
+        playTone(880, 0.06, 'square', 0.06);
+        if(players[1].mag <= 0){
+          players[1].reloading = true; players[1].reloadTimer = 0;
+        }
+      }
+    }
+
+    // bullets update & collision
+    for(let i = bullets.length - 1; i >= 0; i--){
+      const b = bullets[i];
+      b.update(dt);
+      if(b.pos.x < -200 || b.pos.x > levelWidth + 200 || b.pos.y < -400 || b.pos.y > H + 400){ bullets.splice(i,1); continue; }
+
+      let hitSomething = false;
+      // bullets vs players (friendly fire enabled per your last request)
+      for(let pi = 0; pi < players.length; pi++){
+        const p = players[pi];
+        if(p.dead && p.alpha <= 0) continue;
+        if(p === b.owner) continue;
+        if(b.pos.x + b.w > p.pos.x && b.pos.x < p.pos.x + p.w && b.pos.y + b.h > p.pos.y && b.pos.y < p.pos.y + p.h){
+          if(!p.dead && b.owner !== null){
+            // previously we skipped owner - per request "开启队友伤害" we now allow friendly fire; but avoid self-hitting immediately for bullet spawn location.
+            p.hp -= b.damage * ENEMY_DAMAGE_MULT;
+            if(p.hp <= 0){ p.hp = 0; handlePlayerDeath(p, pi); }
+          }
+          bullets.splice(i,1); hitSomething = true;
+          break;
+        }
+      }
+      if(hitSomething) continue;
+
+      // bullets vs ground enemies
+      for(let j = enemies.length - 1; j >= 0; j--){
+        const e = enemies[j];
+        if(b.pos.x + b.w > e.pos.x && b.pos.x < e.pos.x + e.w && b.pos.y + b.h > e.pos.y && b.pos.y < e.pos.y + e.h){
+          e.hp -= b.damage;
+          e.hitFlashTimer = ENEMY_FLASH_TIME;
+          spawnParticles(e.pos.x + e.w/2, e.pos.y + e.h/2, {r:180,g:50,b:50}, PARTICLE_COUNT);
+          bullets.splice(i,1);
+          if(e.hp <= 0){
+            spawnParticles(e.pos.x + e.w/2, e.pos.y + e.h/2, {r:255,g:160,b:60}, Math.floor(PARTICLE_COUNT*1.2));
+            enemies.splice(j,1);
+          } else {
+            e.state = 'stunned';
+            e.stateTimer = 0.5 + Math.random()*0.7;
+          }
+          hitSomething = true; break;
+        }
+      }
+      if(hitSomething) continue;
+
+      // bullets vs flying enemies
+      for(let j = flyingEnemies.length - 1; j >= 0; j--){
+        const fe = flyingEnemies[j];
+        if(b.pos.x + b.w > fe.pos.x && b.pos.x < fe.pos.x + fe.w && b.pos.y + b.h > fe.pos.y && b.pos.y < fe.pos.y + fe.h){
+          fe.hp -= b.damage;
+          fe.hitFlashTimer = ENEMY_FLASH_TIME;
+          spawnParticles(fe.pos.x + fe.w/2, fe.pos.y + fe.h/2, {r:255,g:100,b:100}, Math.floor(PARTICLE_COUNT*0.8));
+          bullets.splice(i,1);
+          if(fe.hp <= 0) flyingEnemies.splice(j,1);
+          break;
+        }
+      }
+    }
+
+    // update enemies & flying
+    for(const e of enemies) e.update(dt);
+    for(const fe of flyingEnemies) fe.update(dt);
+
+    // enemy contact damage
+    for(const e of enemies){
+      for(const p of players){
+        if(p.dead) continue;
+        if(p.pos.x + p.w > e.pos.x && p.pos.x < e.pos.x + e.w && p.pos.y + p.h > e.pos.y && p.pos.y < e.pos.y + e.h){
+          // apply damage over time
+          p.hp -= 20 * (dt * 4) * ENEMY_DAMAGE_MULT;
+          if(p.hp <= 0){ p.hp = 0; handlePlayerDeath(p, players.indexOf(p)); }
+        }
+      }
+    }
+    for(const fe of flyingEnemies){
+      for(const p of players){
+        if(p.dead) continue;
+        if(p.pos.x + p.w > fe.pos.x && p.pos.x < fe.pos.x + fe.w && p.pos.y + p.h > fe.pos.y && p.pos.y < fe.pos.y + fe.h){
+          p.hp -= 25 * (dt * 4) * ENEMY_DAMAGE_MULT;
+          if(p.hp <= 0){ p.hp = 0; handlePlayerDeath(p, players.indexOf(p)); }
+        }
+      }
+    }
+
+    // collisions
+    resolveCollisionsAndSpecials();
+
+    // update particles
+    for(let i = particles.length -1; i>=0; i--){ const pt = particles[i]; pt.update(dt); if(pt.life <= 0) particles.splice(i,1); }
+
+    // camera
+    updateCamera();
+
+    // level clear
+    if(players.length && players.every(p => p.pos.x > levelWidth - 120)){
+      if(enemies.length === 0 && flyingEnemies.length === 0){
+        if(level < MAX_LEVELS){
+          for(const p of players) p.celebrateTimer = 1.2;
+          level++; genLevel(level); spawnPlayers(); levelLabel.textContent = level;
+        } else { running = false; showOverlay('All Clear!', '恭喜通关全部 '+MAX_LEVELS+' 关！'); }
+      } else {
+        showTempTip('必须先清光所有怪物才能过关！');
+      }
+    }
+
+    // HUD
+    if(players[0]) p1hpEl.textContent = Math.max(0, Math.round(players[0].hp));
+    if(players[1]) p2hpEl.textContent = Math.max(0, Math.round(players[1].hp));
+  }
+
+  // update prev keys for edge detection + prev mouse/touch
+  for(const k in keys) prevKeys[k] = !!keys[k];
+  prevKeys['mouseDown'] = !!mouse.down;
+  prevKeys['touchLeft'] = !!touchState.left;
+  prevKeys['touchRight'] = !!touchState.right;
+  prevKeys['touchJump'] = !!touchState.jump;
+  prevKeys['touchFire'] = !!touchState.fire;
+
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+/* -------------------- player death -------------------- */
+function handlePlayerDeath(player, id){
+  if(player.dead) return;
+  player.kill();
+  setTimeout(()=>{
+    if(twoPlayer){
+      const otherIdx = id === 0 ? 1 : 0;
+      const other = players[otherIdx];
+      if(other && !other.dead){
+        running = false; showOverlay('胜利', '玩家'+(otherIdx+1)+' 获胜！');
+      } else { running = false; showOverlay('平局', '双方均倒下'); }
+    } else {
+      running = false; showOverlay('Game Over', '你已死亡（单人模式）');
+    }
+  }, 120);
+}
+
+/* -------------------- draw helpers & sky -------------------- */
+function drawShadow(ctx, cx, cy, w, h, alpha){
+  ctx.save();
+  ctx.beginPath();
+// ctx.ellipse(cx, cy, w*0.5, h*0.5, 0, 0, Math.PI*2);
+  //ctx.fillStyle = 'rgba(255,0,0,'+ ((alpha || 0.2) * 0.01) +')';
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawSky(){
+  const t = performance.now()/1000;
+  const sunX = 100 + Math.sin(t*0.3)*40; const sunY = 80 + Math.sin(t*0.6)*6;
+  ctx.save(); ctx.globalAlpha = 0.95; ctx.beginPath(); ctx.arc(sunX - cam.x*0.02, sunY, 48 + (Math.sin(t*2)*2), 0, Math.PI*2); ctx.fillStyle = 'rgba(255,220,50,0.95)'; ctx.fill(); ctx.restore();
+  for(let i=0;i<6;i++){
+    const cx = (t*30*(0.4+i*0.1) + i*180) % (levelWidth) - cam.x * (0.2 + i*0.02);
+    const cy = 100 + i*20 + Math.sin(t+i)*8;
+    ctx.beginPath(); ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.ellipse(cx, cy, 70, 28, 0, 0, Math.PI*2); ctx.fill();
+  }
+}
+
+function draw(){
+  // camera shake offset is applied inside updateCamera via cam.x; here handle vertical shake if desired
+  ctx.clearRect(0,0,W,H);
+  drawSky();
+
+  // parallax mountains
+  ctx.save(); ctx.translate(-cam.x*0.1,0);
+  for(let x=-100;x<levelWidth;x+=300){ ctx.fillStyle='#b0c4de'; ctx.beginPath(); ctx.moveTo(x,H); ctx.lineTo(x+150,H-140); ctx.lineTo(x+300,H); ctx.fill(); }
+  ctx.restore();
+
+  // blocks
+  for(const b of blocks) b.draw(ctx, cam);
+  // ground enemies
+  for(const e of enemies) e.draw(ctx, cam);
+  // flying enemies
+  for(const fe of flyingEnemies) fe.draw(ctx, cam);
+
+  // bullets
+  for(const b of bullets) b.draw(ctx, cam);
+
+  // particles
+  for(const pt of particles) pt.draw(ctx, cam);
+
+  // players
+  for(let i=0;i<players.length;i++) players[i].draw(ctx, cam, i);
+
+  // foreground ground
+  ctx.fillStyle='#5c3f27';
+  ctx.fillRect(-cam.x, groundY, levelWidth + cam.x, H - groundY);
+
+  // HUD overlay
+  //ctx.fillStyle='rgba(0,0,0,0.4)'; ctx.fillRect(12,12,420,64);
+  ctx.fillStyle='#fff'; ctx.font='16px sans-serif';
+  ctx.fillText('关卡: '+level+' / '+MAX_LEVELS, 18, 34);
+  ctx.fillText('地面怪: '+enemies.length+'  天空怪: '+flyingEnemies.length, 18, 54);
+
+  // low HP vignette & heartbeat UI (DOM handled for simplicity)
+  if(players[0] && players[0].hp <= MAX_HP * 0.25){
+    const v = document.getElementById('vignette');
+   // v.style.background = 'radial-gradient(ellipse at center, rgba(255,0,0,0.08), rgba(0,0,0,0.4))';
+  } else {
+    document.getElementById('vignette').style.background = '';
+  }
+}
+
+/* -------------------- UI functions -------------------- */
+function showOverlay(title, sub){ overlayTitle.textContent = title; overlaySub.textContent = sub; overlay.style.display = 'grid'; }
+function hideOverlay(){ overlay.style.display = 'none'; }
+let tipTimer = 0;
+function showTempTip(text, time=1200){
+  const prev = overlayTitle.textContent;
+  const prevSub = overlaySub.textContent;
+  overlayTitle.textContent = text; overlaySub.textContent = ''; overlay.style.display = 'grid';
+  clearTimeout(tipTimer);
+  tipTimer = setTimeout(()=>{ overlayTitle.textContent = prev; overlaySub.textContent = prevSub; overlay.style.display = 'none'; }, time);
+}
+overlayRestart.onclick = ()=>{ hideOverlay(); resetToLevel(1); running = true; }
+
+/* -------------------- UI handlers & difficulty -------------------- */
+const startBtn = document.getElementById('startBtn');
+const startScreen = document.getElementById('startScreen');
+const twoPcb = document.getElementById('twoP');
+const mobileCheckbox = document.getElementById('mobileMode');
+const diffModal = document.getElementById('diffModal');
+
+startBtn.onclick = ()=>{
+  // apply mobile checkbox behavior: if mobile selected, disable 2P
+  mobileModeEnabled = mobileCheckbox.checked;
+  if(mobileModeEnabled) twoPcb.checked = false;
+  twoPlayer = twoPcb.checked && !mobileModeEnabled;
+  startScreen.style.display='none';
+  // pause world until difficulty chosen
+  diffModal.style.display='grid';
+  gamePaused = true;
+};
+
+function applyDifficulty(diff){
+  DIFFICULTY = diff;
+  if(diff === 'easy'){
+    MAX_HP = 300; ENEMY_SPEED_MULT = 0.6; ENEMY_HP_MULT = 0.5; ENEMY_DAMAGE_MULT = 0.4; ENEMY_JUMP_VEL = -420;
+  } else if(diff === 'normal'){
+    MAX_HP = 100; ENEMY_SPEED_MULT = 1.0; ENEMY_HP_MULT = 1.0; ENEMY_DAMAGE_MULT = 1.0; ENEMY_JUMP_VEL = -520;
+  } else if(diff === 'hard'){
+    MAX_HP = 70; ENEMY_SPEED_MULT = 1.6; ENEMY_HP_MULT = 2.0; ENEMY_DAMAGE_MULT = 1.2; ENEMY_JUMP_VEL = -690;
+  }
+  // apply to players and enemies
+  for(const p of players){ p.hp = Math.min(p.hp, MAX_HP); }
+  // regenerate level with updated multipliers and unpause
+  diffModal.style.display='none';
+  enableTouchUI(mobileModeEnabled);
+  gamePaused = false;
+  running = true;
+  genLevel(level);
+  spawnPlayers();
+}
+
+document.getElementById('diffEasy').onclick = ()=> applyDifficulty('easy');
+document.getElementById('diffNormal').onclick = ()=> applyDifficulty('normal');
+document.getElementById('diffHard').onclick = ()=> applyDifficulty('hard');
+
+document.getElementById('restartBtn').onclick = ()=>{ resetToLevel(1); running=true; startScreen.style.display='none'; };
+document.getElementById('muteBtn').onclick = ()=>{ audioEnabled = !audioEnabled; document.getElementById('muteBtn').textContent = audioEnabled ? '静音' : '已静音'; };
+
+/* -------------------- touch UI visibility -------------------- */
+function enableTouchUI(enable){
+  mobileModeEnabled = enable;
+  if(enable){
+    touchUI.style.display = 'block';
+    touchUI.style.pointerEvents = 'auto';
+    // when enabling mobile touch mode, automatically disable 2P
+    twoPcb.checked = false; twoPlayer = false;
+    // show only single-player ammo UI
+    document.getElementById('ammoP2').style.display = 'none';
+  } else {
+    touchUI.style.display = 'none';
+    touchUI.style.pointerEvents = 'none';
+    document.getElementById('ammoP2').style.display = 'block';
+  }
+}
+
+/* -------------------- init -------------------- */
+applyDifficulty('normal'); // sets default MAX_HP etc.
+genLevel(1);
+spawnPlayers();
+
+// because gamePaused starts true, nothing moves until difficulty chosen.
+// show touch UI if mobileMode was enabled before starting (no)
+if(mobileModeEnabled) enableTouchUI(true);
+
+/* -------------------- final notes -------------------- */
+/*
+- 改动摘要：
+  * 弹药上限 MAX_MAG = 20，射速 FIRE_COOLDOWN = 0.15
+  * 开枪时增加 screenShake 值，摄像机会产生短暂晃动
+  * 单人模式现在只生成一个玩家（spawnPlayers 控制）
+  * 允许队友与自己被子弹击中（friendly fire），但自动换弹与换弹 UI 存在
+  * 触屏启用时自动关闭 2P 模式，并显示触控 UI
+  * 困难模式时怪物跳跃更高（乘以 2）
+  * 飞行怪在接近玩家时直接追击（短程直追）
+  * 板栗怪在追击时会尝试跳过前方平台（检测前方 block）
+  * 开始界面选择难度前游戏全局暂停（gamePaused）
+- 你可以继续要求我进一步微调：例如屏幕缩放冲刺、换弹更复杂的动画、不同武器、重力弹道预测等。
+*/
+window.addEventListener('load', () => {
+    // 启用触控模式
+    mobileModeEnabled = true;
+
+    // 绑定触控按钮事件
+    ["leftBtn","rightBtn","jumpBtn","shootBtn"].forEach(id=>{
+        const el = document.getElementById(id);
+        if(!el) return;
+        el.addEventListener("touchstart", e => {
+            e.preventDefault();
+            if(id === "leftBtn") controls.leftHold = true;
+            if(id === "rightBtn") controls.rightHold = true;
+            if(id === "jumpBtn") controls.jumpPressed = true;
+            if(id === "shootBtn") controls.shootHold = true;
+        });
+        el.addEventListener("touchend", e => {
+            e.preventDefault();
+            if(id === "leftBtn") controls.leftHold = false;
+            if(id === "rightBtn") controls.rightHold = false;
+            if(id === "jumpBtn") controls.jumpPressed = false;
+            if(id === "shootBtn") controls.shootHold = false;
+        });
+    });
+});
+window.addEventListener('load', () => {
+    // 启用触控模式
+    mobileModeEnabled = true;
+
+    // 左按钮
+    document.getElementById('leftBtn').addEventListener('touchstart', e => {
+        e.preventDefault();
+        controls.left = true;
+    });
+    document.getElementById('leftBtn').addEventListener('touchend', e => {
+        e.preventDefault();
+        controls.left = false;
+    });
+
+    // 右按钮
+    document.getElementById('rightBtn').addEventListener('touchstart', e => {
+        e.preventDefault();
+        controls.right = true;
+    });
+    document.getElementById('rightBtn').addEventListener('touchend', e => {
+        e.preventDefault();
+        controls.right = false;
+    });
+
+    // 跳跃按钮
+    document.getElementById('jumpBtn').addEventListener('touchstart', e => {
+        e.preventDefault();
+        controls.jumpPressed = true;
+    });
+    document.getElementById('jumpBtn').addEventListener('touchend', e => {
+        e.preventDefault();
+        controls.jumpPressed = false;
+    });
+
+    // 射击按钮
+    document.getElementById('shootBtn').addEventListener('touchstart', e => {
+        e.preventDefault();
+        controls.shootHold = true;
+    });
+    document.getElementById('shootBtn').addEventListener('touchend', e => {
+        e.preventDefault();
+        controls.shootHold = false;
+    });
+});
+
+
+</script>
+</body>
+</html>
